@@ -3,7 +3,7 @@
 > **NeurIPS 2026 Evaluations & Datasets Track — anonymous code repository.** This is the executable code accompanying the paper *EntropyMath-Generated-v1: Evolutionary Generation and Validation for Auditable Mathematical Reasoning Evaluation* (under double-blind review).
 >
 > **Companion artifacts (separate hosting, see paper for canonical references):**
-> - **Dataset (Hugging Face Datasets):** `huggingface.co/datasets/[ANONYMOUS_AUTHOR]/EntropyMath-Generated-v1` — 934-row release CSV/JSONL, Croissant 1.1 metadata with Responsible AI fields, packaging metadata, license.
+> - **Dataset (Hugging Face Datasets):** `huggingface.co/datasets/sgmlc1234/EntropyMath-Gen-v1` — 934-row release CSV/JSONL, Croissant 1.1 metadata with Responsible AI fields, packaging metadata, license.
 > - **Supplementary archive (OpenReview):** frozen 120-row pre-filter and 180-row audit samples; 1,089 frozen direct-no-tool model outputs; external benchmark control/treatment JSONL arms; quality-gate clean and quarantine manifests; trace exports; per-paper-section evidence README.
 >
 > **Reviewer smoke test:** `./run.sh verify` (≈30 s; checks structure, counts, hashes, schema, and label consistency without invoking model APIs or running long generation jobs).
