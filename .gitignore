@@ -1,0 +1,44 @@
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.coverage
+
+# Local environments and secrets
+.venv/
+.env
+.claude/
+docs/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Runtime artifacts
+*.log
+data/runs/
+data/memory/
+
+# Generated outputs / local experiments
+data/gen_problem/
+
+# Private seed assets
+data/seed/*.json
+!data/seed/*.schema.json
+data/seed/private/
+
+# Internal test harness
+test/

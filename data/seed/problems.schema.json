@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EntropyMath Seed Problem List",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": true,
+    "required": ["ID", "Question", "Answer", "Solution", "Difficulty"],
+    "properties": {
+      "no": {
+        "type": ["integer", "string"]
+      },
+      "ID": {
+        "type": "string",
+        "minLength": 1
+      },
+      "Question": {
+        "type": "string",
+        "minLength": 1
+      },
+      "Answer": {
+        "type": ["string", "number", "integer"]
+      },
+      "Solution": {
+        "type": "string",
+        "minLength": 1
+      },
+      "Difficulty": {
+        "type": "string",
+        "enum": ["Easy", "Medium", "Hard", "Superhard", "easy", "medium", "hard", "superhard"]
+      },
+      "fixed_point": {
+        "type": "boolean",
+        "description": "Optional. Set true when the seed's answer is mathematically forced to a specific constant by its statement (collapse-prone). The selector limits propagation depth for descendants to avoid same-answer survivor chains. Default false."
+      }
+    }
+  }
+}
