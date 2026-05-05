@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import csv
 import difflib
+import hashlib
 import importlib.util
 import json
 import re
@@ -24,6 +25,7 @@ import yaml
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = REPO / "data/seed/external_ablation/combo_manifest_ablation.yaml"
 DEFAULT_OUT = REPO / "data/analysis/ablation_microstudy"
+DEFAULT_CONDITIONS = ("no_near_copy", "no_solvability")
 _VALIDATION_WORKER_MODULE = None
 
 if str(REPO) not in sys.path:
@@ -92,6 +94,10 @@ def _normalize_answer(value: Any) -> str:
 def _normalize_statement(text: str) -> str:
     cleaned = re.sub(r"[^0-9a-zA-Z\s]", " ", (text or "").lower())
     return _STATEMENT_NORMALIZE_RE.sub(" ", cleaned).strip()
+
+
+def _statement_sha256(text: str) -> str:
+    return hashlib.sha256(_normalize_statement(text).encode("utf-8")).hexdigest()
 
 
 def _salient_tokens(text: str, min_len: int = 3, limit: int = 64) -> List[str]:
@@ -403,13 +409,15 @@ def _aggregate(rows: List[Dict[str, Any]], keys: List[str]) -> List[Dict[str, An
         shadow_checked = sum(1 for row in group if row["shadow_solvability_checked"])
         shadow_fail = sum(1 for row in group if row["shadow_solvability_fail"])
         critical = sum(1 for row in group if row["critical_error_proxy"])
-        statement_unique = len({_normalize_statement(row["statement"]) for row in group if row["statement"]})
+        statement_unique = len({_statement_sha256(row["statement"]) for row in group if row["statement"]})
         result = {name: value for name, value in zip(keys, key_values)}
         result.update(
             {
                 "candidate_count": n,
                 "retained_count": retained,
+                "statement_unique_count": statement_unique,
                 "validator_pass_yield_pct": _percent(retained, n),
+                "near_copy_candidate_count": near_copy,
                 "near_copy_candidate_rate_pct": _percent(near_copy, n),
                 "mean_parent_similarity": round(
                     sum(float(row["parent_max_sequence_similarity"]) for row in group) / max(1, n),
@@ -420,12 +428,18 @@ def _aggregate(rows: List[Dict[str, Any]], keys: List[str]) -> List[Dict[str, An
                     6,
                 ),
                 "statement_unique_rate_pct": _percent(statement_unique, n),
+                "parent_answer_same_count": same_answer,
                 "parent_answer_same_rate_pct": _percent(same_answer, n),
+                "code_execution_error_count": code_errors,
                 "code_execution_error_rate_pct": _percent(code_errors, n),
+                "answer_mismatch_count": mismatches,
                 "answer_mismatch_rate_pct": _percent(mismatches, n),
+                "solvability_required_count": required,
                 "solvability_required_rate_pct": _percent(required, n),
                 "shadow_solvability_checked_count": shadow_checked,
+                "shadow_solvability_fail_count": shadow_fail,
                 "shadow_solvability_fail_rate_pct": _percent(shadow_fail, shadow_checked),
+                "critical_error_proxy_count": critical,
                 "critical_error_proxy_rate_pct": _percent(critical, n),
             }
         )
@@ -468,6 +482,7 @@ def analyze_run(run_dir: Path, combo_lookup: Dict[frozenset, Dict[str, str]], ru
                 "candidate_source": source,
                 "id": _problem_id(problem),
                 "statement": _problem_statement(problem),
+                "statement_sha256": _statement_sha256(_problem_statement(problem)),
                 "answer": _problem_answer(problem),
                 "op_type": problem.get("op_type", ""),
                 "generation": (problem.get("generation_meta", {}) or {}).get("generation_count", ""),
@@ -484,22 +499,148 @@ def analyze_run(run_dir: Path, combo_lookup: Dict[frozenset, Dict[str, str]], ru
     return rows
 
 
+def _discover_external_ablation_run_dirs(conditions: Iterable[str]) -> List[Path]:
+    wanted = {str(condition) for condition in conditions}
+    run_dirs: List[Path] = []
+    runs_root = REPO / "data/runs"
+    for run_dir in sorted(runs_root.iterdir()) if runs_root.exists() else []:
+        result_path = run_dir / "full_run_result.json"
+        if not result_path.exists():
+            continue
+        try:
+            summary = _load_json(result_path)
+        except Exception:
+            continue
+        options = summary.get("session_options", {}) or {}
+        if "external_ablation" not in str(options.get("seed_spec") or ""):
+            continue
+        params = summary.get("parameters", {}) or {}
+        condition = str(params.get("ablation_condition") or options.get("ablation_condition") or "full")
+        if wanted and condition not in wanted:
+            continue
+        run_dirs.append(run_dir)
+    return run_dirs
+
+
+def _condition_counts(rows: List[Dict[str, Any]], target: int) -> List[Dict[str, Any]]:
+    grouped: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped[(str(row.get("benchmark", "")), str(row.get("condition", "")))].append(row)
+    out: List[Dict[str, Any]] = []
+    for benchmark, condition in sorted(grouped):
+        group = grouped[(benchmark, condition)]
+        statement_unique = len({row["statement_sha256"] for row in group if row.get("statement_sha256")})
+        out.append(
+            {
+                "benchmark": benchmark,
+                "condition": condition,
+                "target_statement_unique_candidates": target,
+                "candidate_count": len(group),
+                "retained_count": sum(1 for row in group if row["candidate_source"] == "retained"),
+                "statement_unique_count": statement_unique,
+                "remaining_to_target": max(0, target - statement_unique),
+                "ready": statement_unique >= target,
+            }
+        )
+    return out
+
+
+def _paper_table(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    keep = {
+        "benchmark",
+        "condition",
+        "seed_split",
+        "candidate_count",
+        "retained_count",
+        "statement_unique_count",
+        "near_copy_candidate_count",
+        "near_copy_candidate_rate_pct",
+        "mean_parent_similarity",
+        "parent_answer_same_count",
+        "parent_answer_same_rate_pct",
+        "code_execution_error_count",
+        "code_execution_error_rate_pct",
+        "answer_mismatch_count",
+        "answer_mismatch_rate_pct",
+        "shadow_solvability_checked_count",
+        "shadow_solvability_fail_count",
+        "shadow_solvability_fail_rate_pct",
+        "critical_error_proxy_count",
+        "critical_error_proxy_rate_pct",
+    }
+    return [{key: row.get(key, "") for key in row if key in keep} for row in _aggregate(rows, ["benchmark", "condition", "seed_split"])]
+
+
+def _write_markdown_summary(path: Path, condition_counts: List[Dict[str, Any]], paper_rows: List[Dict[str, Any]]) -> None:
+    lines = [
+        "# Expanded Ablation Microstudy Summary",
+        "",
+        "This summary is derived from external-ablation run artifacts and is intended for paper/supplementary consistency checks.",
+        "",
+        "## Cell Readiness",
+        "",
+        "| benchmark | condition | candidates | statement-unique | target | ready |",
+        "|---|---:|---:|---:|---:|---:|",
+    ]
+    for row in condition_counts:
+        lines.append(
+            "| {benchmark} | {condition} | {candidate_count} | {statement_unique_count} | {target_statement_unique_candidates} | {ready} |".format(
+                **row
+            )
+        )
+    lines.extend(
+        [
+            "",
+            "## Paper Table",
+            "",
+            "| benchmark | condition | split | N | unique | near-copy % | parent-same % | code err % | answer mismatch % | shadow fail % | critical % |",
+            "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for row in paper_rows:
+        lines.append(
+            "| {benchmark} | {condition} | {seed_split} | {candidate_count} | {statement_unique_count} | {near_copy_candidate_rate_pct} | {parent_answer_same_rate_pct} | {code_execution_error_rate_pct} | {answer_mismatch_rate_pct} | {shadow_solvability_fail_rate_pct} | {critical_error_proxy_rate_pct} |".format(
+                **row
+            )
+        )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
     parser.add_argument("--out-dir", default=str(DEFAULT_OUT))
-    parser.add_argument("--run-dirs", nargs="+", required=True)
+    parser.add_argument("--run-dirs", nargs="+")
+    parser.add_argument("--discover-external-ablation-runs", action="store_true")
+    parser.add_argument("--conditions", nargs="+", default=list(DEFAULT_CONDITIONS))
+    parser.add_argument("--min-statement-unique-per-cell", type=int, default=0)
     parser.add_argument("--run-shadow-solvability", action="store_true")
     parser.add_argument("--skip-code-execution", action="store_true")
     args = parser.parse_args()
 
     manifest = _load_manifest(Path(args.manifest))
     combo_lookup = _manifest_lookup(manifest)
-    rows: List[Dict[str, Any]] = []
-    for raw_run_dir in args.run_dirs:
+    run_dirs: List[Path] = []
+    if args.discover_external_ablation_runs:
+        run_dirs.extend(_discover_external_ablation_run_dirs(args.conditions))
+    for raw_run_dir in args.run_dirs or []:
         run_dir = Path(raw_run_dir)
         if not run_dir.is_absolute():
             run_dir = REPO / run_dir
+        run_dirs.append(run_dir)
+    run_dirs = sorted(dict.fromkeys(run_dirs))
+    if not run_dirs:
+        raise SystemExit("no run dirs provided; pass --run-dirs or --discover-external-ablation-runs")
+
+    rows: List[Dict[str, Any]] = []
+    wanted_conditions = {str(condition) for condition in args.conditions or []}
+    for run_dir in run_dirs:
+        if not (run_dir / "full_run_result.json").exists():
+            continue
+        summary = _load_json(run_dir / "full_run_result.json")
+        labels = _infer_run_labels(summary, combo_lookup)
+        if wanted_conditions and labels.get("condition") not in wanted_conditions:
+            continue
         rows.extend(
             analyze_run(
                 run_dir,
@@ -511,16 +652,41 @@ def main() -> None:
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    by_benchmark = _aggregate(rows, ["benchmark", "condition", "seed_split"])
+    condition_counts = _condition_counts(rows, args.min_statement_unique_per_cell)
+    paper_rows = _paper_table(rows)
     _write_csv(out_dir / "ablation_candidates.csv", rows)
     _write_csv(out_dir / "ablation_summary.csv", _aggregate(rows, ["condition", "seed_split"]))
-    _write_csv(out_dir / "ablation_by_benchmark.csv", _aggregate(rows, ["benchmark", "condition", "seed_split"]))
+    _write_csv(out_dir / "ablation_by_benchmark.csv", by_benchmark)
+    _write_csv(out_dir / "ablation_condition_counts.csv", condition_counts)
+    _write_csv(out_dir / "ablation_paper_table.csv", paper_rows)
+    _write_markdown_summary(out_dir / "ablation_paper_summary.md", condition_counts, paper_rows)
 
     with (out_dir / "ablation_failures.jsonl").open("w", encoding="utf-8") as handle:
         for row in rows:
             if row["near_copy_candidate"] or row["code_execution_error"] or row["answer_mismatch"] or row["shadow_solvability_fail"]:
                 handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
-    print(json.dumps({"candidate_rows": len(rows), "out_dir": str(out_dir)}, indent=2))
+    if args.min_statement_unique_per_cell:
+        underfilled = [row for row in condition_counts if not row["ready"]]
+        if underfilled:
+            details = ", ".join(
+                f"{row['benchmark']}/{row['condition']}={row['statement_unique_count']}/{args.min_statement_unique_per_cell}"
+                for row in underfilled
+            )
+            raise SystemExit(f"ablation target not met: {details}")
+
+    print(
+        json.dumps(
+            {
+                "run_dirs": len(run_dirs),
+                "candidate_rows": len(rows),
+                "out_dir": str(out_dir),
+                "condition_counts": condition_counts,
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":
