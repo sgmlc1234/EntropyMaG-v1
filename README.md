@@ -6,7 +6,7 @@
 > - **Dataset (Hugging Face Datasets):** `huggingface.co/datasets/sgmlc1234/EntropyMath-Gen-v1` — 934-row release CSV/JSONL, Croissant 1.1 metadata with Responsible AI fields, packaging metadata, license.
 > - **Supplementary archive (OpenReview):** frozen 120-row pre-filter and 180-row audit samples; 1,089 frozen direct-no-tool model outputs; external benchmark control/treatment JSONL arms; quality-gate clean and quarantine manifests; trace exports; per-paper-section evidence README.
 >
-> **Reviewer smoke test:** `./run.sh verify` (≈30 s; checks structure, counts, hashes, schema, and label consistency without invoking model APIs or running long generation jobs).
+> **Reviewer smoke test:** `./run.sh verify`, run from this repository root. It takes a few seconds and uses only the Python standard library — no dependency install, no API keys, no model calls. It checks that the runtime entry points, package layout, system prompts, and public seed schema are present and well-formed, that every shipped module parses, and that no credentials or identifying strings are embedded. The released dataset and the frozen evidence files are hosted separately (see above); their integrity checker ships with the supplementary archive, not with this repository.
 >
 > **Anonymity:** This repository contains no author names, institutional affiliations, internal URLs, API keys, or `.git/` history with author identity. All credential variables are referenced by name only. Private seed problems and full saved-run archives are intentionally excluded.
 
@@ -66,10 +66,16 @@ repo/
 │   ├── grounding.py
 │   ├── state_full.py
 │   └── tracing.py
+├── tools/                   # offline analysis and campaign scripts (not runtime)
 └── data/
     └── seed/
         └── problems.schema.json
 ```
+
+The repository has two distinct parts, and only the first is exercised by a generation run:
+
+- **Runtime.** `main.py`, `config.py`, `tools.py`, `data_paths.py`, `artifact_views.py`, `prompts/`, and `deepagent/`. These implement the generation loop itself. Note that the root module `tools.py` (sandbox execution and search helpers, imported as `from tools import ...`) is separate from the `tools/` directory below; the module shadows the directory on the import path, and the directory is never imported as a package.
+- **Offline analysis.** `tools/*.py` and `tools/*.sh` are standalone scripts, each run directly as `python tools/<name>.py`. They build evaluation datasets, apply the quality gate, launch benchmark campaigns, and produce the tables and figures reported in the paper. They are not imported by the runtime and are not needed to run a generation.
 
 Generated run outputs under `data/runs/`, persistent memory under `data/memory/`, local experiment outputs under `data/gen_problem/`, private seed assets under `data/seed/*.json`, and the internal `test/` harness are intentionally excluded from the public repository.
 
