@@ -12,8 +12,7 @@ Code-only smoke test for this repository. Runs offline with the Python
 standard library only: no dependency install, no API keys, no model calls.
 
 This repository ships the generation runtime. The released dataset and the
-frozen evidence files are hosted separately (see README.md); their integrity
-checker is distributed with the supplementary archive, not here.
+frozen evidence files are hosted separately; see README.md for where they live.
 USAGE
   exit 2
 fi
@@ -185,5 +184,5 @@ print()
 print("Scope note: this checks the generation runtime shipped in this")
 print("repository. The 934-row release is hosted on Hugging Face Datasets and")
 print("the frozen evidence files ship with the OpenReview supplementary")
-print("archive, which carries its own integrity checker. See README.md.")
+print("archive; neither is checked by this command. See README.md.")
 PY
